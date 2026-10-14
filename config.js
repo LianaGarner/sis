@@ -4,4 +4,4 @@ const TEST={url:'https://mmnkmmcopuklxvnkgfhe.supabase.co',key:'sb_publishable_S
 // Opening the site on your own computer (Live Server) uses TEST; the GitHub site uses PROD.
 const isLocal=['localhost','127.0.0.1'].includes(location.hostname);
 const SUPABASE_URL=(isLocal?TEST:PROD).url,SUPABASE_KEY=(isLocal?TEST:PROD).key;
-const SCHOOL='Your School Name';
+const SCHOOL='Flowers for the Future International';
