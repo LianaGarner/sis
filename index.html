@@ -1,0 +1,73 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>School SIS</title>
+<style>body{font:15px system-ui;margin:0;background:#f6f7f9;color:#222}header{display:flex;justify-content:space-between;padding:12px 20px;background:#2b4a6f;color:#fff}nav{padding:8px 20px;background:#fff;border-bottom:1px solid #ddd}button{padding:6px 12px;margin:2px;cursor:pointer}main{padding:20px;max-width:1100px;margin:auto;overflow-x:auto}table{border-collapse:collapse;background:#fff;width:100%}td,th{border:1px solid #ddd;padding:4px 8px;text-align:left}input,select{padding:6px;width:100%;box-sizing:border-box;margin:3px 0}td input{min-width:70px}.pt{width:60px}.card{background:#fff;padding:16px;border-radius:8px;margin:12px 0}.err{color:#b00}label{display:block;font-size:12px}@media print{header,nav,button{display:none}}</style></head><body><div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY),$=s=>document.querySelector(s),A=$('#app'),M=()=>$('#main');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tbl=(h,r)=>`<table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${r.map(x=>`<tr>${x.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`;
+let me;
+sb.auth.onAuthStateChange(ev=>{if(ev==='PASSWORD_RECOVERY')recover();if(ev==='SIGNED_OUT')login()});
+(async()=>{const{data:{session}}=await sb.auth.getSession();session?start():login()})();
+function login(msg=''){A.innerHTML=`<div class=card style="max-width:340px;margin:12vh auto"><h2>${esc(SCHOOL)}</h2><p class=err>${esc(msg)}</p><input id=em type=email placeholder=Email><input id=pw type=password placeholder=Password><button id=go>Sign in</button><p><a href=# id=fp>Forgot password?</a></p></div>`;
+$('#go').onclick=async()=>{const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});error?login(error.message):start()};
+$('#fp').onclick=async e=>{e.preventDefault();const m=$('#em').value.trim();if(!m)return login('Enter your email first.');await sb.auth.resetPasswordForEmail(m,{redirectTo:location.href.split('#')[0]});login('If the account exists, a reset link was emailed.')}}
+function recover(){A.innerHTML=`<div class=card style="max-width:340px;margin:12vh auto"><h2>New password</h2><input id=np type=password placeholder="New password (8+ characters)"><button id=sv>Save</button><p id=m class=err></p></div>`;
+$('#sv').onclick=async()=>{const{error}=await sb.auth.updateUser({password:$('#np').value});error?$('#m').textContent=error.message:start()}}
+async function start(){const{data:{user}}=await sb.auth.getUser();const{data}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
+if(!data)return A.innerHTML='<div class=card>No profile for this account. Ask the administrator.</div>';me=data;
+const tabs=me.role==='admin'?['Students','Student Info','Grade Levels','Courses','Classes','Enrollments','Requirements','Gradebooks','Records']:me.role==='teacher'?['My Classes']:['Classes','Transcript','Credits','My Info'];
+A.innerHTML=`<header><b>${esc(SCHOOL)}</b><span>${esc(me.full_name)} (${me.role}) <button id=lo>Sign out</button></span></header><nav>${tabs.map(t=>`<button class=tb>${t}</button>`).join('')}</nav><main id=main></main>`;
+$('#lo').onclick=()=>sb.auth.signOut();document.querySelectorAll('.tb').forEach(b=>b.onclick=()=>show(b.textContent));show(tabs[0])}
+function show(t){M().innerHTML='Loading…';return t==='Classes'?myClasses(me.id):t==='My Classes'||t==='Gradebooks'?classList():t==='Transcript'?transcript(me):t==='Credits'?credits(me.id):t==='Records'?records():t==='My Info'?myInfo():t==='Grade Levels'?gradeTools():crud(t)}
+const res=id=>sb.from('enrollment_results').select('*').eq('student_id',id).order('school_year').order('term');
+async function myClasses(id,el=M()){const{data}=await res(id);el.innerHTML=tbl(['Year','Term','Course','Subject','Credits','Result','Points'],(data||[]).map(r=>[r.school_year,r.term,r.course,r.subject,r.credits,r.result||'In progress',r.possible?`${r.earned}/${r.possible}`:'']))}
+async function transcript(p,el=M()){const{data}=await res(p.id);const done=(data||[]).filter(r=>r.result),g={};
+let h=`<div class=card><h2>Official Transcript</h2><p><b>${esc(p.full_name)}</b> · ID ${esc(p.student_code)} · Grade level: ${esc(p.grade_level)}</p>`;
+done.forEach(r=>(g[r.school_year+' '+r.term]??=[]).push(r));
+for(const k in g)h+=`<h3>${esc(k)}</h3>`+tbl(['Course','Subject','Credits','Result'],g[k].map(r=>[r.course,r.subject,r.credits,r.result]));
+el.innerHTML=h+`<p><b>Total credits earned: ${done.filter(r=>r.result==='Pass').reduce((s,r)=>s+Number(r.credits),0)}</b></p></div><button onclick=print()>Print</button>`}
+async function credits(id,el=M()){const[{data:r},{data:q}]=await Promise.all([res(id),sb.from('requirements').select('*').order('subject')]);const e={};let tr=0,te=0;
+(r||[]).filter(x=>x.result==='Pass').forEach(x=>e[x.subject]=(e[x.subject]||0)+Number(x.credits));
+const rows=(q||[]).map(x=>{const g=e[x.subject]||0,n=Number(x.credits_required);tr+=n;te+=Math.min(g,n);return`<tr><td>${esc(x.subject)}</td><td>${g} / ${n}</td><td><progress max=${n} value=${Math.min(g,n)}></progress></td></tr>`}).join('');
+el.innerHTML=`<h3>Graduation progress: ${te} of ${tr} required credits</h3><table>${rows}</table>`}
+async function records(){const{data}=await sb.from('profiles').select('*').eq('role','student').order('full_name');
+M().innerHTML=`<select id=ps><option value="">Choose student…</option>${data.map(p=>`<option value=${p.id}>${esc(p.full_name)}</option>`).join('')}</select><div id=r1></div><div id=r2></div>`;
+$('#ps').onchange=e=>{const p=data.find(x=>x.id===e.target.value);if(p){transcript(p,$('#r1'));credits(p.id,$('#r2'))}}}
+async function classList(){const{data}=await sb.from('classes').select('id,school_year,term,courses(name)').order('school_year',{ascending:false});
+M().innerHTML='<h3>Classes</h3>'+(data||[]).map(c=>`<p><a href=# data-c=${c.id}>${esc(c.courses.name)} — ${c.school_year} ${c.term}</a></p>`).join('');
+M().querySelectorAll('[data-c]').forEach(a=>a.onclick=e=>{e.preventDefault();gradebook(a.dataset.c)})}
+async function gradebook(cid){const[{data:as},{data:en},{data:cl}]=await Promise.all([sb.from('assignments').select('*').eq('class_id',cid).order('title'),sb.from('enrollment_results').select('*').eq('class_id',cid),sb.from('classes').select('pass_pct,courses(name)').eq('id',cid).single()]);
+const ids=en.map(e=>e.student_id),{data:pr}=await sb.from('profiles').select('id,full_name,student_code,grade_level,email').in('id',ids.length?ids:['00000000-0000-0000-0000-000000000000']);
+const{data:sc}=as.length?await sb.from('scores').select('*').in('assignment_id',as.map(a=>a.id)):{data:[]};
+const nm=Object.fromEntries(pr.map(p=>[p.id,`${esc(p.full_name)}<br><small>${esc(p.student_code)} · Grade ${esc(p.grade_level)} · ${esc(p.email)}</small>`])),S={};sc.forEach(s=>S[s.assignment_id+s.student_id]=s.points);
+M().innerHTML=`<h3>${esc(cl.courses.name)} (pass at ${cl.pass_pct}%)</h3><button id=back>← Back</button><button id=na>+ Assignment</button><p>Blank = not yet graded (not counted).</p><table><tr><th>Student</th>${as.map(a=>`<th>${esc(a.title)}<br>/${a.points_possible} <button class=del data-a=${a.id}>✕</button></th>`).join('')}<th>Total</th><th>Auto</th><th>Final</th></tr>${en.map(e=>`<tr><td>${nm[e.student_id]}</td>${as.map(a=>`<td><input class=pt data-a=${a.id} data-s=${e.student_id} value="${S[a.id+e.student_id]??''}"></td>`).join('')}<td>${e.possible?`${e.earned}/${e.possible}`:''}</td><td>${e.auto_result||''}</td><td><select class=ov data-e=${e.enrollment_id}>${['','Pass','Fail'].map(v=>`<option ${v===(e.final_override||'')?'selected':''}>${v}</option>`).join('')}</select></td></tr>`).join('')}</table>`;
+$('#back').onclick=()=>classList();
+$('#na').onclick=async()=>{const t=prompt('Assignment title'),p=parseFloat(prompt('Points possible'));if(t&&p>0){await sb.from('assignments').insert({class_id:cid,title:t,points_possible:p});gradebook(cid)}};
+M().querySelectorAll('.pt').forEach(i=>i.onchange=async()=>{const k={assignment_id:i.dataset.a,student_id:i.dataset.s},v=i.value.trim();const r=v===''?await sb.from('scores').delete().match(k):await sb.from('scores').upsert({...k,points:parseFloat(v)});r.error?alert(r.error.message):gradebook(cid)});
+M().querySelectorAll('.ov').forEach(s=>s.onchange=async()=>{await sb.from('enrollments').update({final_override:s.value||null}).eq('id',s.dataset.e);gradebook(cid)});
+M().querySelectorAll('.del').forEach(b=>b.onclick=async()=>{if(confirm('Delete this assignment and its scores?')){await sb.from('assignments').delete().eq('id',b.dataset.a);gradebook(cid)}})}
+const R={id:{t:'profiles',s:'id,full_name,role',f:r=>r.role==='student',l:r=>r.full_name},course_id:{t:'courses',s:'id,name',l:r=>r.name},teacher_id:{t:'profiles',s:'id,full_name,role',f:r=>r.role==='teacher',l:r=>r.full_name},student_id:{t:'profiles',s:'id,full_name,role',f:r=>r.role==='student',l:r=>r.full_name},class_id:{t:'classes',s:'id,school_year,term,courses(name)',l:r=>`${r.courses.name} ${r.school_year} ${r.term}`}};
+const SEL={term:['Fall','Spring'],role:['student','teacher','admin']},NUM=['credits','pass_pct','credits_required','grade_level'];
+const T={Students:['profiles',['full_name','role','student_code','grade_level','email'],0],'Student Info':['student_private',['id','father_name','whatsapp','notes'],0],Courses:['courses',['name','subject','credits'],1],Classes:['classes',['course_id','teacher_id','school_year','term','pass_pct'],1],Enrollments:['enrollments',['class_id','student_id'],1],Requirements:['requirements',['subject','credits_required'],1]};
+async function crud(name){const[tb,cols,add]=T[name],opts={};
+for(const c of cols)if(R[c]){const{data}=await sb.from(R[c].t).select(R[c].s);opts[c]=(data||[]).filter(R[c].f||(()=>1)).map(r=>[r.id,R[c].l(r)])}
+const{data:rows,error}=await sb.from(tb).select('*').order(cols[0]),key=tb==='requirements'?'subject':'id';
+if(opts.id&&rows)rows.sort((a,b)=>(opts.id.find(o=>o[0]===a.id)?.[1]||'').localeCompare(opts.id.find(o=>o[0]===b.id)?.[1]||''));
+const inp=(c,v,id)=>{const o=opts[c]||(SEL[c]&&SEL[c].map(x=>[x,x]));return o?`<select data-c=${c} data-id="${id}" ${c==='id'?'disabled':''}><option value="">—</option>${o.map(([k,l])=>`<option value="${esc(k)}" ${k==v?'selected':''}>${esc(l)}</option>`).join('')}</select>`:`<input data-c=${c} data-id="${id}" value="${esc(v)}" ${NUM.includes(c)?'type=number step=any':''}>`};
+M().innerHTML=`<h3>${name}</h3><p class=err>${error?esc(error.message):''}</p>${add?`<div class=card id=addrow>${cols.map(c=>`<label>${c}${inp(c,'','new')}</label>`).join('')}<button id=add>Add</button></div>`:'<p>Student accounts are created in Supabase (Authentication), then edited here.</p>'}<table><tr>${cols.map(c=>`<th>${c}</th>`).join('')}<th></th></tr>${(rows||[]).map(r=>`<tr>${cols.map(c=>`<td>${inp(c,r[c],r[key])}</td>`).join('')}<td>${add?`<button class=x data-k="${esc(r[key])}">✕</button>`:''}</td></tr>`).join('')}</table>`;
+M().querySelectorAll('table [data-c]').forEach(i=>i.onchange=async()=>{const{error}=await sb.from(tb).update({[i.dataset.c]:i.value===''?null:i.value}).eq(key,i.dataset.id);if(error)alert(error.message)});
+if(add)$('#add').onclick=async()=>{const o={};M().querySelectorAll('#addrow [data-c]').forEach(i=>{if(i.value!=='')o[i.dataset.c]=i.value});const{error}=await sb.from(tb).insert(o);error?alert(error.message):crud(name)};
+M().querySelectorAll('.x').forEach(b=>b.onclick=async()=>{if(confirm('Delete this row?')){const{error}=await sb.from(tb).delete().eq(key,b.dataset.k);error?alert(error.message):crud(name)}})}
+
+async function myInfo(){const{data:p}=await sb.from('student_private').select('*').eq('id',me.id).maybeSingle();
+M().innerHTML='<div class=card><h3>My information</h3><p>Please check this carefully and tell the administrator if anything is wrong.</p>'+tbl(['Field','Value'],[['Full name',me.full_name],['Student ID',me.student_code],['Grade level',me.grade_level],['Email',me.email],["Father's name",p?.father_name],['WhatsApp',p?.whatsapp],['Additional info',p?.notes]])+'</div>'}
+async function gradeTools(){
+M().innerHTML=`<h3>Grade levels</h3><div class=card><p>Edit any single student's grade in the Students tab. Bulk options:</p><button id=up>Move ALL students up one grade (max 12)</button></div><div class=card><p>Suggest promotions from credits earned: <input id=pg type=number value=6 style="width:80px"> credits per grade level (grade 10 below this, 11 at this, 12 at double). Never lowers a grade.</p><button id=pv>Preview</button><div id=pvo></div></div>`;
+$('#up').onclick=async()=>{if(!confirm('Move every student below grade 12 up one grade?'))return;const{data}=await sb.from('profiles').select('id,grade_level').eq('role','student');for(const s of data)if(s.grade_level<12)await sb.from('profiles').update({grade_level:s.grade_level+1}).eq('id',s.id);alert('Done')};
+$('#pv').onclick=async()=>{const per=parseFloat($('#pg').value)||6;const[{data:st},{data:rs}]=await Promise.all([sb.from('profiles').select('id,full_name,grade_level').eq('role','student').order('full_name'),sb.from('enrollment_results').select('student_id,credits,result')]);
+const e={};rs.filter(r=>r.result==='Pass').forEach(r=>e[r.student_id]=(e[r.student_id]||0)+Number(r.credits));
+const ch=st.map(s=>({...s,cr:e[s.id]||0,sg:Math.min(12,10+Math.floor((e[s.id]||0)/per))})).filter(s=>s.sg>s.grade_level);
+$('#pvo').innerHTML=ch.length?tbl(['Student','Credits','Current','Suggested'],ch.map(s=>[s.full_name,s.cr,s.grade_level,s.sg]))+'<button id=ap>Apply these changes</button>':'No changes suggested.';
+if(ch.length)$('#ap').onclick=async()=>{for(const s of ch)await sb.from('profiles').update({grade_level:s.sg}).eq('id',s.id);alert('Applied');gradeTools()}}}
+</script></body></html>
